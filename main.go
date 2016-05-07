@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-xmpp"
 	"github.com/yhat/scrape"
@@ -15,15 +16,22 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
+var baseURL = "https://www.livecoding.tv/"
+var client *xmpp.Client
+var jidSuffix = "@livecoding.tv"
+var roomSuffix = "@chat.livecoding.tv"
+var usernameToFind string
+
 func main() {
-	// TODO: Check for arguments given to app
-	if len(os.Args) < 2 {
-		fmt.Print("You need to provide username and password \n")
+	// Check for arguments
+	if len(os.Args) < 3 {
+		fmt.Print("Did you provide enough arguments? -> " + os.Args[0] + " <username-to-find> <your-username> <your-password> \n")
 		os.Exit(1)
 	}
 
-	username := os.Args[1]
-	password := os.Args[2]
+	usernameToFind = os.Args[1]
+	username := os.Args[2]
+	password := os.Args[3]
 
 	liveChannels := getLiveChannels()
 	startXMPP(username, password, liveChannels)
@@ -34,7 +42,7 @@ func main() {
 
 func getLiveChannels() []string {
 	// request and parse the front page
-	resp, err := http.Get("https://www.livecoding.tv/livestreams/")
+	resp, err := http.Get(baseURL + "livestreams/")
 	if err != nil {
 		panic(err)
 	}
@@ -67,11 +75,6 @@ func getLiveChannels() []string {
 	return liveChannels
 }
 
-var jidSuffix = "@livecoding.tv"
-var roomSuffix = "@chat.livecoding.tv"
-var client *xmpp.Client
-var usersFetched bool
-
 type SavedUser struct {
 	Room     string
 	Username string
@@ -81,6 +84,9 @@ var savedUsers []*SavedUser
 
 func saveUser(from string) {
 	splittedFrom := strings.Split(from, "@chat.livecoding.tv/")
+	if len(splittedFrom) != 2 {
+		return
+	}
 
 	s := &SavedUser{
 		Room:     splittedFrom[0],
@@ -90,8 +96,26 @@ func saveUser(from string) {
 	savedUsers = append(savedUsers, s)
 }
 
+func findUsername() {
+	var rooms []string
+
+	for _, u := range savedUsers {
+		if u.Username == usernameToFind {
+			rooms = append(rooms, u.Room)
+		}
+	}
+
+	fmt.Print(usernameToFind + " was found in following channels: \n")
+	for _, r := range rooms {
+		fmt.Print(baseURL + r + "\n")
+	}
+
+	os.Exit(0)
+}
+
 func startXMPP(username, password string, liveChannels []string) {
-	// timeout := time.After(5 * time.Second)
+	timeout := time.After(5 * time.Second)
+	stopFetching := false
 
 	options := xmpp.Options{
 		Host:      "xmpp.livecoding.tv:5222",
@@ -108,17 +132,18 @@ func startXMPP(username, password string, liveChannels []string) {
 		log.Fatal(err)
 	}
 
-	// TODO: Should not keep a persistent connection to the XMPP server.
-	// Use a timer or something to recieved presence stanzas within X time and then quit.
 	go func() {
 		for {
+			if stopFetching {
+				findUsername()
+				return
+			}
 			chat, err := client.Recv()
 			if err != nil {
 				log.Fatal(err)
 			}
 			switch v := chat.(type) {
 			case xmpp.Presence:
-				fmt.Print("presence received")
 				saveUser(v.From)
 			}
 		}
@@ -126,11 +151,15 @@ func startXMPP(username, password string, liveChannels []string) {
 
 	// Join all live channels to get users
 	for _, channel := range liveChannels {
-		client.JoinMUCNoHistory(channel+roomSuffix, "yaky")
+		client.JoinMUCNoHistory(channel+roomSuffix, username)
 	}
 
-	// TODO: remove this infinite loop and use it in main.go (or just a select{})
 	for {
+		select {
+		case <-timeout:
+			stopFetching = true
+			return
+		}
 		in := bufio.NewReader(os.Stdin)
 		line, err := in.ReadString('\n')
 		if err != nil {
@@ -143,8 +172,4 @@ func startXMPP(username, password string, liveChannels []string) {
 			client.Send(xmpp.Chat{Remote: tokens[0], Type: "chat", Text: tokens[1]})
 		}
 	}
-}
-
-func JoinRoom(room string) {
-	client.JoinMUCNoHistory(room+roomSuffix, "yaky")
 }
