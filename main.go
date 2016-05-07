@@ -105,9 +105,13 @@ func findUsername() {
 		}
 	}
 
-	fmt.Print(usernameToFind + " was found in following channels: \n")
-	for _, r := range rooms {
-		fmt.Print(baseURL + r + "\n")
+	if len(rooms) > 0 {
+		fmt.Print(usernameToFind + " was found in following channels: \n")
+		for _, r := range rooms {
+			fmt.Print(baseURL + r + "\n")
+		}
+	} else {
+		fmt.Print(usernameToFind + " was not found anywhere :( \n")
 	}
 
 	os.Exit(0)
